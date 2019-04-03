@@ -128,7 +128,7 @@ void *server_thread(void *data_void) {
 //        exit(1);
         server_addr.sin_port = htons(++server_port);
     }
-    printf("My socket : %d\n", server_port);
+    printf("My port : %d\n", server_port);
 
     if ((listen(socket_fd, 5)) != 0) {
         printf("Listen failed...\n");
