@@ -2,8 +2,7 @@
 #include "torrent.h"
 
 #define MY_IP_ADDRESS "10.91.45.245"
-#define SERVER_PORT 4000
-//#define CLIENT_PORT 2002
+#define SERVER_PORT 2000
 
 int main(int argc, char **argv) {
     struct global_data gl_data;
@@ -107,7 +106,7 @@ void *server_thread(void *data_void) {
         printf("socket creation failed...\n");
         exit(1);
     }
-    global_data.socket_fd = socket_fd;
+    gl_data->socket_fd = socket_fd;
     bzero(&server_addr, sizeof(server_addr));
 
     server_addr.sin_family = AF_INET;
@@ -126,11 +125,11 @@ void *server_thread(void *data_void) {
 
     // start several servers
     pthread_t server[MAX_SERVER_CONNECTIONS];
-    for (int i = 0; i < MAX_SERVER_CONNECTIONS; i++){
+    for (int i = 0; i < MAX_SERVER_CONNECTIONS; i++) {
         pthread_create(&server[i], 0, process_connection, &gl_data);
     }
 
-    for (int i = 0; i < MAX_SERVER_CONNECTIONS; i++){
+    for (int i = 0; i < MAX_SERVER_CONNECTIONS; i++) {
         pthread_join(server[i], 0);
     }
 
@@ -141,7 +140,7 @@ void *server_thread(void *data_void) {
 void *process_connection(void *data_void) {
     struct global_data *gl_data = (struct global_data *) data_void;
     struct sockaddr_in client_addr;
-    char command[10];
+    memset(&client_addr, 0, sizeof(client_addr));
 
     socklen_t addr_len = sizeof(client_addr);
 
@@ -152,11 +151,22 @@ void *process_connection(void *data_void) {
         exit(1);
     }
 
-    memset(&client_addr, 0, sizeof(client_addr));
+    struct node_t client_node;
+    client_node.ip_address = malloc(sizeof(char) * INET_ADDRSTRLEN);
+    inet_ntop(AF_INET, &(client_addr.sin_addr), client_node.ip_address, INET_ADDRSTRLEN);
+
+    if (contain_ip(client_node.ip_address, gl_data->blacklist) != -1) {
+        printf("Blocked a not-trustful client with ip: %s\n", client_node.ip_address);
+        return NULL;
+    }
+
     int num_bytes;
+    char command[10];
+    pthread_t thread_id = pthread_self();
     while (1) {
         num_bytes = recvfrom(gl_data->socket_fd, (char *) &command, sizeof(command), 0,
                              (struct sockaddr *) &client_addr, &addr_len);
+        printf("Request got by server #%lu", thread_id);
         if (num_bytes > 0) {
             if (strcmp(command, SYN) == 0) {
                 printf("Get SYN command from\n");
@@ -299,6 +309,25 @@ void accept_connection(struct global_data *gl_data, int socket_fd) {
     char *ch_node = convert_node(&node);
     add(ch_node, gl_data->nodes);
 
+    int index;
+    int num_connection;
+    if ((index = is_exist(ch_node, gl_data->connections)) >= 0) {
+        num_connection = increment_query(index, gl_data->connections);
+        if (num_connection > MAX_SYN_REQUESTS) {
+            add(ch_node, gl_data->blacklist);
+            delete(ch_node, gl_data->connections);
+            printf("Add not-trustful client in blacklist: %s\n", ch_node);
+            return;
+        } else {
+            num_connection = increment_query(index, gl_data->connections);
+            printf("Client: %s made his %d connection", ch_node, num_connection);
+        }
+    } else {
+        add(ch_node, gl_data->connections);
+        increment_query(index, gl_data->connections);
+        printf("Client: %s made his first connection", ch_node);
+    }
+
     strcpy(syn_data_copy, syn_data);
     struct database arr_files = split_files(syn_data_copy);
     for (int i = 0; i < arr_files.count; i++) {
@@ -325,6 +354,7 @@ void accept_connection(struct global_data *gl_data, int socket_fd) {
         printf("Server received %s\n", cur_node);
     }
 
+    decrement_query(index, gl_data->connections);
 
     printf("Connection accepted successfully\n");
 }
@@ -338,14 +368,26 @@ void send_file(struct global_data *gl_data, int socket_fd) {
     memset(&client_addr, 0, sizeof(client_addr));
     recvfrom(socket_fd, (char *) &filename, sizeof(filename), 0,
              (struct sockaddr *) &client_addr, &addr_len);
+
+    struct node_t client_node;
+    client_node.ip_address = malloc(sizeof(char) * INET_ADDRSTRLEN);
+    inet_ntop(AF_INET, &(client_addr.sin_addr), client_node.ip_address, INET_ADDRSTRLEN);
+
+    if (contain_ip(client_node.ip_address, gl_data->connections) < 0) {
+        printf("Client with ip: %s have not made a connection yet", client_node.ip_address);
+        return;
+    }
+
     // send # words and loop (send word)
+    int file_index;
     int num_words = 0;
     char ch_num_words[sizeof(int)];
-    if (is_exist(filename, gl_data->files) >= 0) {
+    if ((file_index = is_exist(filename, gl_data->files)) >= 0) {
         FILE *file = fopen(filename, "r");
         if (file == NULL) {
             printf("File dont work correctly\n");
         } else {
+            increment_query(file_index, gl_data->files);
             num_words = count_words(file);
             sprintf(ch_num_words, "%d", num_words);
             sendto(socket_fd, (char *) &ch_num_words, strlen(ch_num_words), 0,
@@ -396,9 +438,33 @@ int add(char *entity, struct database *db) {
     if (is_exist(entity, db) < 0 || db->count == MAX_ENTITIES) {
         pthread_mutex_lock(&db->lock);
 
+        db->queries = realloc(db->queries, (db->count + 1) * sizeof(int));
+        db->queries[db->count] = 0;
+
         db->data = realloc(db->data, (db->count + 1) * (sizeof(char *)));
         db->data[db->count] = malloc(strlen(entity) * sizeof(char));
         strcpy(db->data[db->count++], entity);
+
+        pthread_mutex_unlock(&db->lock);
+        return db->count;
+    } else {
+        return -1;
+    }
+}
+
+int delete(char *entity, struct database *db) {
+    int index;
+    if ((index = is_exist(entity, db)) >= 0) {
+        pthread_mutex_lock(&db->lock);
+
+        for (int i = index - 1; i < db->count - 1; i++) {
+            db->queries[i] = db->queries[i - 1];
+            db->data[i] = db->data[i + 1];
+        }
+        db->count--;
+
+        db->queries = realloc(db->queries, (db->count) * sizeof(int));
+        db->data = realloc(db->data, (db->count) * (sizeof(char *)));
 
         pthread_mutex_unlock(&db->lock);
         return db->count;
@@ -521,17 +587,51 @@ char *convert_node(struct node_t *node) {
 struct database init_db(char *filename) {
     struct database db;
     db.data = malloc(sizeof(char *));
+    db.queries = malloc(sizeof(int *));
     db.count = 0;
     if (pthread_mutex_init(&db.lock, NULL) != 0) {
         perror("DB mutex init has failed\n");
         exit(1);
     }
-    if (filename != NULL){
+    if (filename != NULL) {
         int load_count = load(filename, &db);
         if (load_count > 0)
             db.count = load_count;
     }
     return db;
+}
+
+int increment_query(int index, struct database *db) {
+    if (0 < index && index < db->count) {
+        pthread_mutex_lock(&db->lock);
+        db->queries[index]++;
+        pthread_mutex_unlock(&db->lock);
+
+        return db->queries[index];
+    }
+    return -1;
+}
+
+int decrement_query(int index, struct database *db) {
+    if (0 < index && index < db->count) {
+        pthread_mutex_lock(&db->lock);
+        if (db->queries[index] > 0)
+            db->queries[index]--;
+        pthread_mutex_unlock(&db->lock);
+
+        return db->queries[index];
+    }
+    return -1;
+}
+
+int contain_ip(char *ip_address, struct database *db) {
+    node_t node;
+    for (int i = 0; i < db->count; i++) {
+        node = parse_node(db->data[i]);
+        if (strcmp(node.ip_address, ip_address) == 0)
+            return i;
+    }
+    return -1;
 }
 
 int get_int_len(int number) {

@@ -14,6 +14,7 @@
 #include <sys/socket.h>
 
 #define MAX_SERVER_CONNECTIONS 4
+#define MAX_SYN_REQUESTS 5
 #define MAX_ENTITIES 64
 #define MAX_NAME_LENGTH 128
 
@@ -32,6 +33,7 @@
 
 typedef struct database {
     char **data;
+    int *queries;
     int count;
     pthread_mutex_t lock;
 } database;
@@ -76,6 +78,8 @@ int load(char *, struct database *);
 
 int add(char *, struct database *);
 
+int delete(char *, struct database *);
+
 int is_exist(char *, struct database *);
 
 char **split_file(FILE *);
@@ -89,6 +93,12 @@ struct node_t parse_node(char *);
 char *convert_node(struct node_t *);
 
 struct database init_db(char *);
+
+int increment_query(int, struct database *);
+
+int decrement_query(int, struct database *);
+
+int contain_ip(char*, struct database *);
 
 int get_int_len(int);
 
