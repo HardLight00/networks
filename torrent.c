@@ -7,42 +7,29 @@
 
 int main(int argc, char **argv) {
     struct global_data gl_data;
-    struct database files, nodes;
+    struct database files, nodes, connections, blacklist, arguments;
 
-    files.data = malloc(sizeof(char *));
-    files.count = 0;
-    if (pthread_mutex_init(&files.lock, NULL) != 0) {
-        perror("File mutex init has failed\n");
-        exit(1);
-    }
-
-    nodes.data = malloc(sizeof(char *));
-    nodes.count = 0;
-    if (pthread_mutex_init(&nodes.lock, NULL) != 0) {
-        perror("Node mutex init has failed\n");
-        exit(1);
-    }
+    // init databases
+    files = init_db("known_files.txt");
+    nodes = init_db("known_nodes.txt");
+    connections = init_db(NULL);
+    blacklist = init_db(NULL);
+    arguments = init_db(NULL);
 
     // automate testing
-    struct database arguments;
     arguments.count = argc;
-    arguments.data = malloc(sizeof(char *) * arguments.count);
     for (int i = 0; i < arguments.count; i++) {
-        arguments.data[i] = malloc(sizeof(char) * strlen(argv[i]));
-        strcpy(arguments.data[i], argv[i]);
+        add(argv[i], &arguments);
     }
-    if (pthread_mutex_init(&arguments.lock, NULL) != 0) {
-        perror("Argument mutex init has failed\n");
-        exit(1);
-    }
-    gl_data.args = &arguments;
 
-    files.count = load("known_files.txt", &files);
-    nodes.count = load("known_nodes.txt", &nodes);
-
+    // init the global data
     gl_data.files = &files;
     gl_data.nodes = &nodes;
+    gl_data.connections = &connections;
+    gl_data.blacklist = &blacklist;
+    gl_data.args = &arguments;
 
+    // execute client and server code
     pthread_t client;
     pthread_create(&client, 0, client_thread, &gl_data);
     server_thread(&gl_data);
@@ -112,15 +99,15 @@ void *client_thread(void *data_void) {
 
 void *server_thread(void *data_void) {
     struct global_data *gl_data = (struct global_data *) data_void;
-    int socket_fd, connect_fd;
-    socklen_t len;
-    struct sockaddr_in server_addr, client_addr;
+    int socket_fd;
+    struct sockaddr_in server_addr;
 
     socket_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (socket_fd == -1) {
         printf("socket creation failed...\n");
         exit(1);
     }
+    global_data.socket_fd = socket_fd;
     bzero(&server_addr, sizeof(server_addr));
 
     server_addr.sin_family = AF_INET;
@@ -136,39 +123,47 @@ void *server_thread(void *data_void) {
         printf("Listen failed...\n");
         exit(1);
     }
-    len = sizeof(client_addr);
 
-    // Accept the data packet from client and verification
-    connect_fd = accept(socket_fd, (struct sockaddr *) &client_addr, &len);
-    if (connect_fd < 0) {
-        printf("server accept failed...\n");
-        exit(1);
+    // start several servers
+    pthread_t server[MAX_SERVER_CONNECTIONS];
+    for (int i = 0; i < MAX_SERVER_CONNECTIONS; i++){
+        pthread_create(&server[i], 0, process_connection, &gl_data);
     }
 
-    process_connection(gl_data, connect_fd);
+    for (int i = 0; i < MAX_SERVER_CONNECTIONS; i++){
+        pthread_join(server[i], 0);
+    }
 
     close(socket_fd);
     return NULL;
 }
 
-void process_connection(struct global_data *gl_data, int socket_fd) {
+void *process_connection(void *data_void) {
+    struct global_data *gl_data = (struct global_data *) data_void;
     struct sockaddr_in client_addr;
     char command[10];
 
     socklen_t addr_len = sizeof(client_addr);
 
+    // Accept the data packet from client and verification
+    int connect_fd = accept(gl_data->socket_fd, (struct sockaddr *) &client_addr, &addr_len);
+    if (connect_fd < 0) {
+        printf("server accept failed...\n");
+        exit(1);
+    }
+
     memset(&client_addr, 0, sizeof(client_addr));
     int num_bytes;
     while (1) {
-        num_bytes = recvfrom(socket_fd, (char *) &command, sizeof(command), 0,
+        num_bytes = recvfrom(gl_data->socket_fd, (char *) &command, sizeof(command), 0,
                              (struct sockaddr *) &client_addr, &addr_len);
         if (num_bytes > 0) {
             if (strcmp(command, SYN) == 0) {
                 printf("Get SYN command from\n");
-                accept_connection(gl_data, socket_fd);
+                accept_connection(gl_data, gl_data->socket_fd);
             } else if (strcmp(command, REQUEST) == 0) {
                 printf("Get REQUEST command\n");
-                send_file(gl_data, socket_fd);
+                send_file(gl_data, gl_data->socket_fd);
             }
             sleep(2);
             printf("Server done his work\n");
@@ -521,6 +516,22 @@ char *convert_node(struct node_t *node) {
     strcat(node_info, port);
 
     return node_info;
+}
+
+struct database init_db(char *filename) {
+    struct database db;
+    db.data = malloc(sizeof(char *));
+    db.count = 0;
+    if (pthread_mutex_init(&db.lock, NULL) != 0) {
+        perror("DB mutex init has failed\n");
+        exit(1);
+    }
+    if (filename != NULL){
+        int load_count = load(filename, &db);
+        if (load_count > 0)
+            db.count = load_count;
+    }
+    return db;
 }
 
 int get_int_len(int number) {

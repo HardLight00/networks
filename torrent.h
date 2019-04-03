@@ -13,6 +13,7 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
+#define MAX_SERVER_CONNECTIONS 4
 #define MAX_ENTITIES 64
 #define MAX_NAME_LENGTH 128
 
@@ -44,7 +45,10 @@ typedef struct node_t {
 typedef struct global_data {
     struct database *files;
     struct database *nodes;
+    struct database *connections;
+    struct database *blacklist;
     struct database *args;
+    int socket_fd;
 } global_data;
 
 typedef struct net_info {
@@ -56,11 +60,13 @@ void *client_thread(void *data_void);
 
 void *server_thread(void *data_void);
 
-void process_connection(struct global_data *, int socket);
+void *process_connection(void *data_void);
 
 void make_connection(struct global_data *, struct net_info *);
 
 void request_file(struct global_data *, struct net_info *);
+
+void flood(struct global_data *, struct net_info *);
 
 void accept_connection(struct global_data *, int);
 
@@ -81,6 +87,8 @@ int count_words(FILE *);
 struct node_t parse_node(char *);
 
 char *convert_node(struct node_t *);
+
+struct database init_db(char *);
 
 int get_int_len(int);
 
