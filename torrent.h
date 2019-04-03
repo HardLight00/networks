@@ -13,6 +13,7 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
+#define SLEEP_TIME 1
 #define MAX_SERVER_CONNECTIONS 4
 #define MAX_SYN_REQUESTS 5
 #define MAX_ENTITIES 64
@@ -25,6 +26,7 @@
 #define NUM_OF_SEPARATORS_PER_INFO 2
 #define INFO_LENGTH 21 // :***.***.***.***:**** - :ip_address:port
 
+#define DEFAULT_NAME "default_name"
 #define MY_NAME "torrent"
 #define EXIT_COMMAND "exit"
 #define FLOOD "2"
@@ -70,9 +72,9 @@ void request_file(struct global_data *, struct net_info *);
 
 void flood(struct global_data *, struct net_info *);
 
-void accept_connection(struct global_data *, int);
+void accept_connection(struct global_data *, struct net_info *);
 
-void send_file(struct global_data *, int);
+void send_file(struct global_data *, struct net_info *);
 
 int load(char *, struct database *);
 
@@ -99,6 +101,8 @@ int increment_query(int, struct database *);
 int decrement_query(int, struct database *);
 
 int contain_ip(char*, struct database *);
+
+int contain_ip_and_port(char*, int, struct database *);
 
 int get_int_len(int);
 
