@@ -74,7 +74,7 @@ void *client_thread(void *data_void) {
     net.socket_fd = socket_fd;
     net.sockaddrIn = service_addr;
 
-    int terminate = 5;
+    int terminate = 2;
 
     char command[MAX_COMMAND_LENGTH];
     do {
@@ -135,17 +135,17 @@ void *server_thread(void *data_void) {
         exit(1);
     }
 
-//    process_connection(gl_data);
+    process_connection(gl_data);
 
     // start several servers
-    pthread_t server[MAX_SERVER_CONNECTIONS];
-    for (int i = 0; i < MAX_SERVER_CONNECTIONS; i++) {
-        pthread_create(&server[i], 0, process_connection, &gl_data);
-    }
-
-    for (int i = 0; i < MAX_SERVER_CONNECTIONS; i++) {
-        pthread_join(server[i], 0);
-    }
+//    pthread_t server[MAX_SERVER_CONNECTIONS];
+//    for (int i = 0; i < MAX_SERVER_CONNECTIONS; i++) {
+//        pthread_create(&server[i], 0, process_connection, &gl_data);
+//    }
+//
+//    for (int i = 0; i < MAX_SERVER_CONNECTIONS; i++) {
+//        pthread_join(server[i], 0);
+//    }
 
     close(socket_fd);
     return NULL;
@@ -157,47 +157,45 @@ void *process_connection(void *data_void) {
     memset(&client_addr, 0, sizeof(client_addr));
 
     socklen_t addr_len = sizeof(client_addr);
-    while (1) {
-        // Accept the data packet from client and verification
-        int connect_fd = accept(gl_data->socket_fd, (struct sockaddr *) &client_addr, &addr_len);
-        if (connect_fd < 0) {
-            printf("server accept failed...\n");
-            exit(1);
-        }
-
-        struct net_info net_info;
-        net_info.socket_fd = connect_fd;
-        net_info.sockaddrIn = client_addr;
-
-        struct node_t client_node;
-        client_node.ip_address = malloc(sizeof(char) * INET_ADDRSTRLEN);
-        inet_ntop(AF_INET, &(net_info.sockaddrIn.sin_addr), client_node.ip_address, INET_ADDRSTRLEN);
-
-        if (contain_ip(client_node.ip_address, gl_data->blacklist) != -1) {
-            printf("Blocked a not-trustful client with ip: %s\n", client_node.ip_address);
-            return NULL;
-        }
-
-        int num_bytes;
-        char command[10];
-        pthread_t thread_id = pthread_self();
-        while (contain_ip(client_node.ip_address, gl_data->blacklist) == -1) {
-            num_bytes = recvfrom(connect_fd, (char *) &command, sizeof(command), 0,
-                                 (struct sockaddr *) &client_addr, &addr_len);
-            if (num_bytes > 0) {
-//            printf("Request got by server #%lu\n", thread_id);
-                if (strcmp(command, SYN) == 0) {
-                    printf("Get SYN command\n");
-                    accept_connection(gl_data, &net_info);
-                } else if (strcmp(command, REQUEST) == 0) {
-                    printf("Get REQUEST command\n");
-                    send_file(gl_data, &net_info);
-                }
-                sleep(SLEEP_TIME);
-            }
-        }
-        printf("Server done his work\n");
+    // Accept the data packet from client and verification
+    int connect_fd = accept(gl_data->socket_fd, (struct sockaddr *) &client_addr, &addr_len);
+    if (connect_fd < 0) {
+        printf("server accept failed...\n");
+        exit(1);
     }
+
+    struct net_info net_info;
+    net_info.socket_fd = connect_fd;
+    net_info.sockaddrIn = client_addr;
+
+    struct node_t client_node;
+    client_node.ip_address = malloc(sizeof(char) * INET_ADDRSTRLEN);
+    inet_ntop(AF_INET, &(net_info.sockaddrIn.sin_addr), client_node.ip_address, INET_ADDRSTRLEN);
+
+    if (contain_ip(client_node.ip_address, gl_data->blacklist) != -1) {
+        printf("Blocked a not-trustful client with ip: %s\n", client_node.ip_address);
+        return NULL;
+    }
+
+    int num_bytes;
+    char command[10];
+    pthread_t thread_id = pthread_self();
+    while (contain_ip(client_node.ip_address, gl_data->blacklist) == -1) {
+        num_bytes = recvfrom(connect_fd, (char *) &command, sizeof(command), 0,
+                             (struct sockaddr *) &client_addr, &addr_len);
+        if (num_bytes > 0) {
+//            printf("Request got by server #%lu\n", thread_id);
+            if (strcmp(command, SYN) == 0) {
+                printf("Get SYN command\n");
+                accept_connection(gl_data, &net_info);
+            } else if (strcmp(command, REQUEST) == 0) {
+                printf("Get REQUEST command\n");
+                send_file(gl_data, &net_info);
+            }
+            sleep(SLEEP_TIME);
+        }
+    }
+    printf("Server done his work\n");
 }
 
 void make_connection(struct global_data *gl_data, struct net_info *server) {
