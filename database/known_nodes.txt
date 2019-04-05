@@ -1,0 +1,5 @@
+{name:ilia, ip:127.0.0.1, port:2000}
+{name:elena, ip:127.0.0.1, port:3000}
+{name:yuriy, ip:127.0.0.1, port:4000}
+{name:natasha, ip:127.0.0.1, port:5000}
+{name:ruslan, ip:127.0.0.1, port:6000}
