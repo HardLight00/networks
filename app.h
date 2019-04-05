@@ -13,7 +13,7 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
-#define SLEEP_TIME 20000
+#define SLEEP_TIME 400000
 #define MAX_SERVER_CONNECTIONS 4
 #define MAX_SYN_REQUESTS 4
 #define MAX_ENTITIES 64
@@ -27,7 +27,7 @@
 #define INFO_LENGTH 21 // :***.***.***.***:**** - :ip_address:port
 
 #define DEFAULT_NAME "default_name"
-#define MY_NAME "hardlight"
+#define MY_NAME "hard"
 #define REQUEST 0
 #define SYN 1
 #define FLOOD 2
@@ -88,7 +88,7 @@ void make_connection(struct global_data_t *gl_data, struct sockaddr_in *server);
 
 void request_file(struct global_data_t *gl_data, struct sockaddr_in *server);
 
-void flood_attack(struct global_data_t *gl_data, struct sockaddr_in *server;
+void flood_attack(struct global_data_t *gl_data, struct sockaddr_in *server);
 
 void accept_connection(struct global_data_t *gl_data, struct net_t *net);
 
@@ -134,7 +134,7 @@ int is_contain_ip(struct in_addr *ip_addr, struct blacklist_database_t *blacklis
 
 int count_words(FILE *file);
 
-struct file_database_t split_files(struct node_t *owner, char *data);
+void split_files(struct node_t owner, char *data, struct file_database_t *file_db);
 
 struct node_t parse_node(char *str_node);
 

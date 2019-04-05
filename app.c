@@ -1,8 +1,8 @@
 // Created by ilia on 04/04/19.
 #include "app.h"
 
-#define MY_IP_ADDRESS "192.168.1.194"
-#define SERVER_PORT 2000
+#define MY_IP_ADDRESS "10.240.20.163"
+#define SERVER_PORT 7000
 
 int main(int argc, char **argv) {
     struct global_data_t gl_data;
@@ -28,13 +28,13 @@ int main(int argc, char **argv) {
     gl_data.args = &args;
 
     // execute client and server code
-    pthread_t client, server;
+    pthread_t client;
 
     pthread_create(&client, 0, client_thread, &gl_data);
-    pthread_create(&server, 0, server_thread, &gl_data);
-
+//    pthread_create(&server, 0, server_thread, &gl_data);
+    server_thread(&gl_data);
     pthread_join(client, 0);
-    pthread_join(server, 0);
+//    pthread_join(server, 0);
 
     known_nodes = fopen("./database/known_nodes_res.txt", "wb");
     known_files = fopen("./database/known_files_res.txt", "wb");
@@ -74,11 +74,11 @@ void *client_thread(void *data_void) {
 
     service_addr.sin_family = AF_INET;
     service_addr.sin_addr.s_addr = node.sockaddr->sin_addr.s_addr;
-    service_addr.sin_port = htons(node.sockaddr->sin_port);
+    service_addr.sin_port = (node.sockaddr->sin_port);
 
     int command = 0;
     do {
-        printf("Print the command\n");
+//        printf("Print the command\n");
         if (gl_data->args->count < 3) {
             scanf("%d", &command);
         } else {
@@ -90,7 +90,7 @@ void *client_thread(void *data_void) {
             make_connection(gl_data, &service_addr);
         } else if (command == REQUEST) {
             printf("Client sent REQUEST flag\n");
-            request_file(gl_data, &service_addr);
+//            request_file(gl_data, &service_addr);
         } else if (command == FLOOD) {
             printf("Client sent FLOOD flag\n");
             flood_attack(gl_data, &service_addr);
@@ -109,15 +109,15 @@ void *server_thread(void *data_void) {
     struct sockaddr_in server_addr;
     int socket_fd;
 
-    socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+    socket_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (socket_fd == -1)
         perror("Socket creation failed...\n");
 
     bzero(&server_addr, sizeof(server_addr));
 
     server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    server_addr.sin_port = htons(SERVER_PORT);
+    inet_pton(AF_INET, MY_IP_ADDRESS, &(server_addr.sin_addr));
+    server_addr.sin_port = SERVER_PORT;
 
     int enable = 1;
     if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0)
@@ -129,8 +129,9 @@ void *server_thread(void *data_void) {
     if ((listen(socket_fd, 5)) != 0)
         perror("Listen failed...\n");
 
+    printf("Server is ready\n");
     struct sockaddr_in client_addr;
-    int command = 0;
+    int command = 3;
     while (1) {
         memset(&client_addr, 0, sizeof(client_addr));
         socklen_t addr_len = sizeof(client_addr);
@@ -154,7 +155,9 @@ void *server_thread(void *data_void) {
         } else {
             num_bytes = recvfrom(connect_fd, &command, sizeof(int), 0,
                                  (struct sockaddr *) &client_addr, &addr_len);
-            command = ntohl(command);
+//            if (num_bytes > 0)
+//                printf("%d RECEIVE SOME SHIT\n", command);
+//            command = ntohl(command);
 
             if (num_bytes > 0) {
                 if (command == 1) {
@@ -163,7 +166,7 @@ void *server_thread(void *data_void) {
                     close(connect_fd);
                 } else if (command == 0) {
                     printf("Got REQUEST command\n");
-                    send_file(gl_data, &net_info);
+//                    send_file(gl_data, &net_info);
                 }
                 usleep(SLEEP_TIME);
             }
@@ -180,50 +183,69 @@ void make_connection(struct global_data_t *gl_data, struct sockaddr_in *dest) {
     int socket_fd;
 
     // socket create and verification
-    socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+    socket_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (socket_fd == -1)
         perror("Socket creation failed...\n");
-    bzero(&dest, sizeof(dest));
+//    bzero(&dest, sizeof(dest));
 
-    if (connect(socket_fd, (struct sockaddr *) &dest, sizeof(dest)) != 0)
+    if (connect(socket_fd, (struct sockaddr *) dest, sizeof(struct sockaddr)) != 0)
         perror("Connection with the server failed...\n");
 
-    int command = htonl((uint32_t) SYN);
+    int command = htonl(SYN);
     sendto(socket_fd, &command, sizeof(int), 0,
-           (struct sockaddr *) dest, sizeof(struct sockaddr));
+           (struct sockaddr *) &dest, sizeof(struct sockaddr));
     usleep(SLEEP_TIME);
 
     char *syn_info = get_myself_info(gl_data);
     sendto(socket_fd, syn_info, MAX_LENGTH, 0, (struct sockaddr *) dest, sizeof(struct sockaddr));
     usleep(SLEEP_TIME);
 
-    pthread_mutex_lock(&gl_data->nodes->lock);
-    int num_nodes = htonl(gl_data->nodes->count);
+//    pthread_mutex_lock(&gl_data->nodes->lock);
+    int count = gl_data->nodes->count;
+    int num_nodes = htonl(count);
     sendto(socket_fd, &num_nodes, sizeof(int), 0,
            (struct sockaddr *) dest, sizeof(struct sockaddr));
     usleep(SLEEP_TIME);
 
-    // loop (send "name:ip_address:port)
-    for (int i = 0; i < gl_data->nodes->count; i++) {
-        char *cur_node = convert_node(&gl_data->nodes->nodes[i]);
-        sendto(socket_fd, (char *) cur_node, strlen(cur_node), 0,
-               (struct sockaddr *) &dest, sizeof(struct sockaddr));
-        printf("Client sent %s\n", cur_node);
-        usleep(SLEEP_TIME);
-    }
-    pthread_mutex_unlock(&gl_data->nodes->lock);
-
+//    // loop (send "name:ip_address:port)
+//    for (int i = 0; i < gl_data->nodes->count; i++) {
+//        char *cur_node = convert_node(&gl_data->nodes->nodes[i]);
+//        sendto(socket_fd, (char *) cur_node, strlen(cur_node), 0,
+//               (struct sockaddr *) &dest, sizeof(struct sockaddr));
+//        printf("Client sent %s\n", cur_node);
+//        usleep(SLEEP_TIME);
+//    }
+//    pthread_mutex_unlock(&gl_data->nodes->lock);
+    close(socket_fd);
     printf("done sync\n");
-
 }
 
 //void request_file(struct global_data_t *gl_data, struct sockaddr_in *dest) {
 //
 //}
 
-//void flood_attack(struct global_data_t *gl_data, struct sockaddr_in *dest) {
-//
-//}
+void flood_attack(struct global_data_t *gl_data, struct sockaddr_in *dest) {
+    int socket_fd;
+    while (1) {
+        // socket create and verification
+        socket_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (socket_fd == -1)
+            perror("Socket creation failed...\n");
+//    bzero(&dest, sizeof(dest));
+
+        if (connect(socket_fd, (struct sockaddr *) dest, sizeof(struct sockaddr)) != 0)
+            perror("Connection with the server failed...\n");
+
+        int command = htonl(SYN);
+        sendto(socket_fd, &command, sizeof(int), 0,
+               (struct sockaddr *) &dest, sizeof(struct sockaddr));
+        sleep(1);
+//        usleep(SLEEP_TIME);
+
+        close(socket_fd);
+        printf("Client flood\n");
+    }
+}
 
 void accept_connection(struct global_data_t *gl_data, struct net_t *net) {
     int index;
@@ -231,17 +253,36 @@ void accept_connection(struct global_data_t *gl_data, struct net_t *net) {
     char *ch_node;
     char *ip_addr = malloc(sizeof(char *));
     inet_ntop(AF_INET, &(net->sockaddr_in.sin_addr), ip_addr, INET_ADDRSTRLEN);
+    if (is_contain_ip(&net->sockaddr_in.sin_addr, gl_data->blacklist) >= 0) {
+        printf("Blocked ddoser\n");
+        return;
+    }
+
+
     if ((index = is_exist_node(&net->sockaddr_in, gl_data->nodes)) >= 0) {
+        if (is_contain_ip(&net->sockaddr_in.sin_addr, gl_data->blacklist) >= 0) {
+            printf("Blocked ddoser\n");
+            return;
+        }
+
         num_connection = increment_query(index, gl_data->nodes);
-        if (num_connection > MAX_SYN_REQUESTS) {
+        if (num_connection == MAX_SYN_REQUESTS) {
+            increment_query(index, gl_data->nodes);
             add_in_blacklist(net->sockaddr_in.sin_addr, gl_data->blacklist);
-            delete_node(&net->sockaddr_in, gl_data->nodes);
+//            delete_node(&net->sockaddr_in, gl_data->nodes);
             printf("Add not-trustful client in blacklist: %s\n", ip_addr);
             return;
+        } else if (num_connection > MAX_SYN_REQUESTS) {
+            printf("Refuse ddoser %s\n", ip_addr);
         } else {
             printf("Client: %s:%d sent his %d syn\n", ip_addr, net->sockaddr_in.sin_port, num_connection);
         }
     } else {
+        if (is_contain_ip(&net->sockaddr_in.sin_addr, gl_data->blacklist) >= 0) {
+            printf("Blocked ddoser\n");
+            return;
+        }
+
         struct node_t client_node;
         client_node.name = DEFAULT_NAME;
         client_node.sockaddr = &net->sockaddr_in;
@@ -265,10 +306,9 @@ void accept_connection(struct global_data_t *gl_data, struct net_t *net) {
     node_t node = parse_node(syn_data);
     add_node(&node, gl_data->nodes);
 
-    struct file_database_t arr_files = split_files(&node, syn_data);
-    for (int i = 0; i < arr_files.count; i++) {
-        add_file(&arr_files.files[i], gl_data->files);
-    }
+    int start = gl_data->files->count;
+    split_files(node, syn_data, gl_data->files);
+    int end = gl_data->files->count;
 
     printf("Server syn with %s\n", syn_data);
 
@@ -281,18 +321,18 @@ void accept_connection(struct global_data_t *gl_data, struct net_t *net) {
     num_known_nodes = ntohl(num_known_nodes);
     printf("Client know %d nodes\n", num_known_nodes);
 
-    char cur_node[MAX_LENGTH];
-    node_t known_node;
-    for (int i = 0; i < num_known_nodes; i++) {
-        num_bytes = recvfrom(net->socket_fd, (char *) cur_node, sizeof(cur_node), 0,
-                             (struct sockaddr *) &client_addr, &addr_len);
-        if (num_bytes == -1)
-            perror("Recvfrom failed");
-
-        known_node = parse_node(ch_node);
-        add_node(&known_node, gl_data->nodes);
-        printf("Server received %s\n", cur_node);
-    }
+//    char cur_node[MAX_LENGTH];
+//    node_t known_node;
+//    for (int i = 0; i < num_known_nodes; i++) {
+//        num_bytes = recvfrom(net->socket_fd, (char *) cur_node, sizeof(cur_node), 0,
+//                             (struct sockaddr *) &client_addr, &addr_len);
+//        if (num_bytes == -1)
+//            perror("Recvfrom failed");
+//
+//        known_node = parse_node(ch_node);
+//        add_node(&known_node, gl_data->nodes);
+//        printf("Server received %s\n", cur_node);
+//    }
 
     decrement_query(index, gl_data->nodes);
 
@@ -308,34 +348,35 @@ char *get_myself_info(struct global_data_t *gl_data) {
     char *server_port = malloc(sizeof(int));
     sprintf(server_port, "%d", SERVER_PORT);
 
-    my_node_info = realloc(my_node_info, strlen(MY_NAME) + strlen(my_node_info));
+    my_node_info = realloc(my_node_info, sizeof(char) * (strlen(MY_NAME) + strlen(my_node_info)));
     strcpy(my_node_info, MY_NAME);
 
-    my_node_info = realloc(my_node_info, strlen(INFO_SEPARATOR) + strlen(my_node_info));
+    my_node_info = realloc(my_node_info, sizeof(char) * (strlen(INFO_SEPARATOR) + strlen(my_node_info)));
     strcat(my_node_info, INFO_SEPARATOR);
 
-    my_node_info = realloc(my_node_info, strlen(MY_IP_ADDRESS) + strlen(my_node_info));
+    my_node_info = realloc(my_node_info, sizeof(char) * (strlen(MY_IP_ADDRESS) + strlen(my_node_info)));
     strcat(my_node_info, MY_IP_ADDRESS);
 
-    my_node_info = realloc(my_node_info, strlen(INFO_SEPARATOR) + strlen(my_node_info));
+    my_node_info = realloc(my_node_info, sizeof(char) * (strlen(INFO_SEPARATOR) + strlen(my_node_info)));
     strcat(my_node_info, INFO_SEPARATOR);
 
-
-    my_node_info = realloc(my_node_info, strlen(server_port) + strlen(my_node_info));
+    my_node_info = realloc(my_node_info, sizeof(char) * (strlen(server_port) + strlen(my_node_info)));
     strcat(my_node_info, server_port);
 
-    my_node_info = realloc(my_node_info, strlen(INFO_SEPARATOR) + strlen(my_node_info));
+    my_node_info = realloc(my_node_info, sizeof(char) * (strlen(INFO_SEPARATOR) + strlen(my_node_info)));
     strcat(my_node_info, INFO_SEPARATOR);
 
     pthread_mutex_lock(&gl_data->files->lock);
     for (int i = 0; i < gl_data->files->count; i++) {
         my_node_info = realloc(my_node_info,
-                               strlen(my_node_info) + strlen(gl_data->files->files[i].name) + strlen(FILE_SEPARATOR));
+                               sizeof(char) *
+                               (strlen(my_node_info) + strlen(gl_data->files->files[i].name) + strlen(FILE_SEPARATOR)));
         strcat(my_node_info, gl_data->files->files[i].name);
         if (i < gl_data->files->count - 1)
             strcat(my_node_info, FILE_SEPARATOR);
     }
     pthread_mutex_unlock(&gl_data->files->lock);
+    return my_node_info;
 }
 
 char *format_node(struct node_t *node) {
@@ -388,20 +429,20 @@ struct node_t unformat_node(char *str_node) {
     char *token;
 
     char *s_node = malloc(sizeof(char) * strlen(str_node));
-    strcpy(str_node, str_node);
+    strcpy(s_node, str_node);
 
-    strtok(s_node, "{");
-    strtok(NULL, "name:");
+//    token = strtok(s_node, "{");
+    token = strtok(s_node, ":");
     token = strtok(NULL, ", ");
     node.name = malloc(sizeof(char) * strlen(token));
     strcpy(node.name, token);
 
-    strtok(NULL, "ip:");
+    strtok(NULL, ":");
     token = strtok(NULL, ", ");
     node.sockaddr = malloc(sizeof(struct sockaddr_in));
     inet_pton(AF_INET, token, &(node.sockaddr->sin_addr));
 
-    strtok(NULL, "port:");
+    strtok(NULL, ":");
     token = strtok(NULL, "}");
     node.sockaddr->sin_port = atoi(token);
 
@@ -450,13 +491,14 @@ struct file_t unformat_file(char *str_file) {
     char *s_file = malloc(sizeof(char) * strlen(str_file));
     strcpy(s_file, str_file);
 
-    strtok(s_file, "{");
-    strtok(NULL, "name:");
+//    strtok(s_file, "{");
+    strtok(s_file, ":");
     token = strtok(NULL, ", ");
     file.name = malloc(sizeof(char) * strlen(token));
     strcpy(file.name, token);
 
-    token = strtok(s_file, "}");
+    token = strtok(NULL, ":");
+    token = strtok(NULL, "}}");
     node = unformat_node(token);
     file.owner = &node;
 
@@ -471,16 +513,16 @@ void load_nodes(FILE *file, struct node_database_t *node_db) {
     rewind(file);
 
     char str[MAX_LENGTH];
-    fgets(str, sizeof(str), file);
-    char *token = strtok(str, "\n");
+    while (fgets(str, sizeof(str), file) != NULL) {
+        char *token = strtok(str, "\n");
 
-    node_t current_node;
-    while (token != NULL) {
-        current_node = unformat_node(token);
-        add_node(&current_node, node_db);
-        token = strtok(NULL, "\n");
+        node_t current_node;
+        while (token != NULL) {
+            current_node = unformat_node(token);
+            add_node(&current_node, node_db);
+            token = strtok(NULL, "\n");
+        }
     }
-
     fclose(file);
 }
 
@@ -491,14 +533,15 @@ void load_files(FILE *file, struct file_database_t *file_db) {
     rewind(file);
 
     char str[MAX_LENGTH];
-    fgets(str, sizeof(str), file);
-    char *token = strtok(str, "\n");
+    while (fgets(str, sizeof(str), file) != NULL) {
+        char *token = strtok(str, "\n");
 
-    file_t current_file;
-    while (token != NULL) {
-        current_file = unformat_file(token);
-        add_file(&current_file, file_db);
-        token = strtok(NULL, "\n");
+        file_t current_file;
+        while (token != NULL) {
+            current_file = unformat_file(token);
+            add_file(&current_file, file_db);
+            token = strtok(NULL, "\n");
+        }
     }
 
     fclose(file);
@@ -507,10 +550,12 @@ void load_files(FILE *file, struct file_database_t *file_db) {
 void load_args(int argc, char **argv, struct arg_database_t *arg_db) {
     pthread_mutex_lock(&arg_db->lock);
     for (int i = 0; i < argc; i++) {
-        strcpy(arg_db->data[i], argv[i]);
-        arg_db->count++;
+        arg_db->data = realloc(arg_db->data, (arg_db->count + 1) * (sizeof(char *)));
+        arg_db->data[arg_db->count] = malloc(strlen(argv[i]) * sizeof(char));
+        strcpy(arg_db->data[arg_db->count++], argv[i]);
+
+        pthread_mutex_unlock(&arg_db->lock);
     }
-    pthread_mutex_unlock(&arg_db->lock);
 }
 
 struct node_database_t init_node_db() {
@@ -552,19 +597,21 @@ struct arg_database_t init_args_db() {
 }
 
 int add_node(struct node_t *node, struct node_database_t *node_db) {
+    pthread_mutex_lock(&node_db->lock);
     if (is_exist_node(node->sockaddr, node_db) < 0 && node_db->count < MAX_ENTITIES) {
-        pthread_mutex_lock(&node_db->lock);
 
         node_db->queries = realloc(node_db->queries, (node_db->count + 1) * sizeof(int));
         node_db->queries[node_db->count] = 0;
 
-        node_db->nodes = realloc(node_db->nodes, sizeof(node_db->nodes) + sizeof(node));
-        node_db->nodes[node_db->count++].sockaddr = node->sockaddr;
-        node_db->nodes[node_db->count++].name = node->name;
+        node_db->nodes = realloc(node_db->nodes, (node_db->count + 1) * (sizeof(struct node_t)));
+        node_db->nodes[node_db->count].sockaddr = node->sockaddr;
+        node_db->nodes[node_db->count].name = malloc(sizeof(char) * strlen(node->name));
+        strcpy(node_db->nodes[node_db->count++].name, node->name);
 
         pthread_mutex_unlock(&node_db->lock);
         return node_db->count;
     } else {
+        pthread_mutex_unlock(&node_db->lock);
         return -1;
     }
 }
@@ -573,8 +620,9 @@ int add_file(struct file_t *file, struct file_database_t *file_db) {
     if (is_exist_file(file, file_db) < 0 && file_db->count < MAX_ENTITIES) {
         pthread_mutex_lock(&file_db->lock);
 
-        file_db->files = realloc(file_db->files, sizeof(file_db->files) + sizeof(file));
-        file_db->files[file_db->count].name = file->name;
+        file_db->files = realloc(file_db->files, (file_db->count + 1) * sizeof(struct file_t));
+        file_db->files[file_db->count].name = malloc(sizeof(char) * strlen(file->name));
+        strcpy(file_db->files[file_db->count].name, file->name);
         file_db->files[file_db->count++].owner = file->owner;
 
         pthread_mutex_unlock(&file_db->lock);
@@ -589,7 +637,7 @@ int add_in_blacklist(struct in_addr ip_addr, struct blacklist_database_t *blackl
         pthread_mutex_lock(&blacklist_db->lock);
 
         blacklist_db->addresses = realloc(blacklist_db->addresses, sizeof(blacklist_db->addresses) + sizeof(ip_addr));
-        blacklist_db->addresses[blacklist_db->count++] = ip_addr;
+        blacklist_db->addresses[blacklist_db->count++] = (ip_addr);
 
         pthread_mutex_unlock(&blacklist_db->lock);
         return blacklist_db->count;
@@ -610,7 +658,7 @@ int delete_node(struct sockaddr_in *sockaddr, struct node_database_t *node_db) {
         node_db->count--;
 
         node_db->queries = realloc(node_db->queries, (node_db->count) * sizeof(int *));
-        node_db->nodes = realloc(node_db->nodes, sizeof(node_db->nodes) - sizeof(struct node_t));
+//        node_db->nodes = realloc(node_db->nodes, sizeof(node_db->nodes) - sizeof(struct node_t));
 
         pthread_mutex_unlock(&node_db->lock);
         return node_db->count;
@@ -639,7 +687,7 @@ int is_exist_file(struct file_t *file, struct file_database_t *file_db) {
 
 int is_contain_ip(struct in_addr *ip_addr, struct blacklist_database_t *blacklist_db) {
     for (int i = 0; i < blacklist_db->count; i++) {
-        if (ip_addr == &blacklist_db->addresses[i])
+        if (&ip_addr->s_addr == &blacklist_db->addresses[i].s_addr)
             return i;
     }
     return -1;
@@ -667,27 +715,25 @@ int count_words(FILE *file) {
     return count;
 }
 
-struct file_database_t split_files(struct node_t *owner, char *data) {
-    struct file_database_t file_db = init_file_db();
+void split_files(struct node_t owner, char *data, struct file_database_t *file_db) {
     char *str = malloc(sizeof(char) * strlen(data));
     strcpy(str, data);
 
+    pthread_mutex_lock(&file_db->lock);
     char *token;
     strtok(str, INFO_SEPARATOR);
     strtok(NULL, INFO_SEPARATOR);
     strtok(NULL, INFO_SEPARATOR);
     token = strtok(NULL, FILE_SEPARATOR);
-    file_db.count = 0;
+    file_db->count = 0;
     struct file_t file;
     while (token != NULL) {
         strcpy(file.name, token);
-        file.owner = owner;
-        file_db.files = realloc(file_db.files, sizeof(file_db) + sizeof(file));
-        file_db.files[file_db.count] = file;
+        file.owner = &owner;
+        add_file(&file, file_db);
         token = strtok(NULL, FILE_SEPARATOR);
     }
-
-    return file_db;
+    pthread_mutex_unlock(&file_db->lock);
 }
 
 struct node_t parse_node(char *s_node) {
